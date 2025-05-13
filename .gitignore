@@ -1,0 +1,61 @@
+# 編譯輸出目錄
+_build/
+Output/
+Debug/
+Release/
+
+# 編譯生成檔案
+*.o
+*.d
+*.crf
+*.axf
+*.hex
+*.bin
+*.map
+*.lst
+*.out
+*.elf
+*.a
+*.lib
+
+# SEGGER Embedded Studio 相關檔案
+*.emSession
+*.emProject.bak
+*.jlink
+JLinkLog.txt
+JLinkSettings.ini
+
+# IDE 設定和暫存目錄
+.settings/
+.vscode/
+.idea/
+*.uvguix.*
+*.uvoptx
+*.uvprojx
+*.uvopt
+
+# 日誌與臨時檔案
+*.log
+*.bak
+*.tmp
+*.swp
+
+# Mac OS 特定檔案
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# SDK configuration backup files
+sdk_config.h.bak
+sdk_config.old
+
+# nRF Connect/nRF Utils generated files
+.nrfconnect/
+generated/
+
+# doxygen generated files
+html/
+latex/
+xml/
