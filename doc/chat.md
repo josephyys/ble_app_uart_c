@@ -607,3 +607,56 @@ GitHub Copilot: # 解決 .text section 和 .rodata section 大小超限錯誤
 - 移除這些限制後，鏈接器可以根據實際需要分配適當的空間
 
 這樣修改不會影響程式的功能，只是允許鏈接器更靈活地分配記憶體空間。
+
+
+# 修改後的純英文串口測試代碼
+
+以下是使用純英文的串口回顯測試代碼：
+
+````python
+import serial
+import time
+
+# Try both serial ports
+ports = ['/dev/ttyACM0', '/dev/ttyACM1']
+
+for port in ports:
+    try:
+        print(f"Trying to connect to {port}...")
+        # Open serial connection
+        ser = serial.Serial(port, 115200, timeout=2)
+        
+        # Send a simple string followed by a newline
+        test_str = "HELLO\r\n"
+        print(f"Sending: {test_str.strip()}")
+        ser.write(test_str.encode())
+        
+        # Wait to ensure there's time for a response
+        time.sleep(0.5)
+        
+        # Try to read the response
+        response = ser.read(100)  # Read up to 100 bytes
+        
+        if response:
+            print(f"Received: {response}")
+        else:
+            print("No response received")
+        
+        # Send multiple characters with intervals
+        print("\nCharacter-by-character test...")
+        for char in "TEST123":
+            ser.write(char.encode())
+            print(f"Sending character: {char}")
+            time.sleep(0.1)
+            resp = ser.read(10)
+            if resp:
+                print(f"Received: {resp}")
+        
+        ser.close()
+        print(f"{port} test completed\n")
+        
+    except Exception as e:
+        print(f"Failed to connect to {port}: {e}\n")
+````
+
+將此代碼保存為 `echo_test.py` 並在 NUC980 上運行 `python echo_test.py` 來測試串口連接。

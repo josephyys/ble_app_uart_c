@@ -271,6 +271,7 @@ void uart_event_handle(app_uart_evt_t * p_event)
         /**@snippet [Handling data from UART] */
         case APP_UART_DATA_READY:
             UNUSED_VARIABLE(app_uart_get(&data_array[index]));
+            app_uart_put(data_array[index]); 
             index++;
 
             if ((data_array[index - 1] == '\n') ||
