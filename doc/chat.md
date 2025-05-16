@@ -660,3 +660,80 @@ for port in ports:
 ````
 
 將此代碼保存為 `echo_test.py` 並在 NUC980 上運行 `python echo_test.py` 來測試串口連接。
+
+
+# nRF52 dongle (pca10059) 相關配置與燒錄說明
+
+## softdevice 與 pca10059 配置
+
+是的，即使使用 dongle (pca10059)，您仍然需要燒錄 softdevice。每個 BLE 應用程式都需要配合適當的 softdevice 運行。
+
+### PCA10059 (nRF52840 dongle) 特性
+
+1. **適用的 Softdevice**：
+   - pca10059 使用 **S140** softdevice (不是 S132)
+   - S140 專為 nRF52840 設計，支援更多功能
+
+2. **燒錄方式**：
+   - pca10059 有 USB 燒錄模式，按下重置按鈕進入
+   - 進入燒錄模式後會出現為 USB 磁碟機
+   - 可直接拖放 .hex 檔案到磁碟機中完成燒錄
+   - 也可使用 nrfjprog 命令列工具燒錄
+
+3. **命令示例**：
+   ```bash
+   # 燒錄 S140 softdevice
+   nrfjprog --program <path_to_sdk>/components/softdevice/s140/hex/s140_nrf52_7.2.0_softdevice.hex --chiperase
+   
+   # 燒錄應用程式
+   nrfjprog --program <output_directory>/ble_app_uart_c_pca10059_s140.hex
+   
+   # 重置設備
+   nrfjprog --reset
+   ```
+
+4. **串口連接**：
+   - pca10059 透過 USB 提供虛擬串口 (USB CDC ACM)
+   - 在 NUC980 系統上可能會識別為 `/dev/ttyACMx` 或 `/dev/ttyUSBx`
+
+## 需要特別注意
+
+確保使用 **pca10059_s140** 版本的專案配置，而不是 pca10040_s132，因為它們使用不同的晶片和 softdevice 組合。
+
+使用 dongle 可以簡化硬體連接，但軟體配置仍需正確設置。
+
+
+# PCA10059 專案中的 UART 配置問題
+
+是的，您可以保留原有的 UART 配置不變。在嘗試為 PCA10059 (nRF52840 Dongle) 適配專案時，不需要立即禁用 UART 相關定義。
+
+## 解決方案分析
+
+1. **保留原始 UART 配置**
+   - 不要添加這三行：
+     ```c
+     #define UART_ENABLED 0
+     #define UART0_ENABLED 0
+     #define APP_UART_ENABLED 0
+     ```
+   - 這樣可以繼續使用原有的 UART 功能
+
+2. **構建錯誤的原因**
+   - 您禁用了 UART，但 main.c 仍然使用了 UART 相關功能
+   - 特別是 `uart_init()` 和 `uart_event_handle()` 函數仍在使用 UART API
+
+3. **建議的方法**
+   - 先保持 UART 啟用狀態，確保專案可以構建
+   - 確認可以用 PCA10056 配置的專案成功構建並運行
+   - 然後再進行 USB CDC ACM 的適配修改
+
+## 如果想要使用 USB CDC ACM 替代 UART
+
+如果您最終目標是使用 USB CDC ACM，應該採取漸進式改變：
+
+1. 先添加 USB CDC ACM 相關代碼和配置
+2. 確保這些代碼可以編譯
+3. 修改應用邏輯以使用 USB CDC ACM
+4. 最後再禁用 UART
+
+這種循序漸進的方式可以避免因同時更改多處而導致的調試困難。
