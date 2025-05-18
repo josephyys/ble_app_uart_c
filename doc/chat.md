@@ -737,3 +737,51 @@ for port in ports:
 4. 最後再禁用 UART
 
 這種循序漸進的方式可以避免因同時更改多處而導致的調試困難。
+
+
+# CoolTerm Serial Connection Settings
+
+Yes, setting initial line states correctly in CoolTerm is often crucial for reliable serial communication with embedded devices like the nRF52:
+
+## Initial Line States in CoolTerm
+
+You should set:
+- **DTR (Data Terminal Ready)**: ON
+- **RTS (Request to Send)**: ON
+
+These signals help establish proper communication with many USB-to-serial converters and embedded devices.
+
+## Why Your Initial UART Data Isn't Appearing
+
+Several factors could prevent the initial UART data from appearing in CoolTerm:
+
+1. **Signal handshaking issues**:
+   - Some USB-to-serial adapters won't transmit data to the PC unless DTR is asserted
+   - The nRF52 is successfully sending data (`TX result: 0` in your logs), but the adapter might be blocking it
+
+2. **Timing issues**:
+   - The initial "Hello" message is sent very early in the boot sequence
+   - CoolTerm might not be connected in time to capture this data
+
+3. **Buffer flushing**:
+   - Serial data might be buffered in the adapter and not immediately transmitted to CoolTerm
+
+## CoolTerm Settings to Fix This
+
+1. In CoolTerm, go to **Connection → Options**
+2. Set appropriate port settings:
+   - **Baudrate**: 115200
+   - **Data Bits**: 8
+   - **Parity**: None
+   - **Stop Bits**: 1
+   - **Flow Control**: None (to match your code's `APP_UART_FLOW_CONTROL_DISABLED`)
+
+3. Go to the **Terminal** tab:
+   - Enable "Local Echo" (helps verify your terminal is working)
+   - Set appropriate line endings (CR+LF)
+
+4. In the **Serial Port Options** section:
+   - Check "Set DTR On Connect"
+   - Check "Set RTS On Connect"
+
+This should help establish proper communication between your nRF52 and CoolTerm.

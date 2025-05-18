@@ -266,12 +266,27 @@ void uart_event_handle(app_uart_evt_t * p_event)
     static uint16_t index = 0;
     uint32_t ret_val;
 
+    NRF_LOG_INFO("uart_event_handle");
+    // Process logs to make them appear in debug window
+    NRF_LOG_PROCESS();
+
     switch (p_event->evt_type)
     {
         /**@snippet [Handling data from UART] */
         case APP_UART_DATA_READY:
             UNUSED_VARIABLE(app_uart_get(&data_array[index]));
-            app_uart_put(data_array[index]); 
+            // Add detailed debug for each received character
+    NRF_LOG_INFO("Received byte[%d]: 0x%02X ('%c')", 
+                 index, data_array[index], 
+                 (data_array[index] >= 32 && data_array[index] <= 126) ? data_array[index] : '.');
+
+               NRF_LOG_INFO("app_uart_put");
+            //app_uart_put(data_array[index]);
+
+            // After app_uart_put
+            ret_code_t put_result = app_uart_put(data_array[index]);
+            NRF_LOG_INFO("TX result: %d", put_result);
+
             index++;
 
             if ((data_array[index - 1] == '\n') ||
@@ -281,14 +296,22 @@ void uart_event_handle(app_uart_evt_t * p_event)
                 NRF_LOG_DEBUG("Ready to send data over BLE NUS");
                 NRF_LOG_HEXDUMP_DEBUG(data_array, index);
 
-                do
+                // Only try to send if we have a valid connection
+                if (m_ble_nus_c.conn_handle != BLE_CONN_HANDLE_INVALID)
                 {
-                    ret_val = ble_nus_c_string_send(&m_ble_nus_c, data_array, index);
-                    if ( (ret_val != NRF_ERROR_INVALID_STATE) && (ret_val != NRF_ERROR_RESOURCES) )
+                    do
                     {
-                        APP_ERROR_CHECK(ret_val);
-                    }
-                } while (ret_val == NRF_ERROR_RESOURCES);
+                        ret_val = ble_nus_c_string_send(&m_ble_nus_c, data_array, index);
+                        if ((ret_val != NRF_ERROR_INVALID_STATE) && (ret_val != NRF_ERROR_RESOURCES))
+                        {
+                            APP_ERROR_CHECK(ret_val);
+                        }
+                    } while (ret_val == NRF_ERROR_RESOURCES);
+                }
+                else
+                {
+                    NRF_LOG_INFO("UART data received but no BLE connection");
+                }
 
                 index = 0;
             }
@@ -548,7 +571,7 @@ void bsp_event_handler(bsp_event_t event)
 static void uart_init(void)
 {
     ret_code_t err_code;
-
+    NRF_LOG_INFO("UART pins - RX: %d, TX: %d", RX_PIN_NUMBER, TX_PIN_NUMBER);
     app_uart_comm_params_t const comm_params =
     {
         .rx_pin_no    = RX_PIN_NUMBER,
@@ -566,10 +589,10 @@ static void uart_init(void)
                        uart_event_handle,
                        APP_IRQ_PRIORITY_LOWEST,
                        err_code);
-
+    NRF_LOG_INFO("UART init result: %d", err_code);
     APP_ERROR_CHECK(err_code);
 }
-
+  
 /**@brief Function for initializing the Nordic UART Service (NUS) client. */
 static void nus_c_init(void)
 {
@@ -650,6 +673,12 @@ static void idle_state_handle(void)
 {
     if (NRF_LOG_PROCESS() == false)
     {
+        // In idle_state_handle
+        // uint8_t byte;
+        // if (app_uart_get(&byte) == NRF_SUCCESS)
+        // {
+        //     NRF_LOG_INFO("Received byte: 0x%02X", byte);
+        // }
         nrf_pwr_mgmt_run();
     }
 }
@@ -671,8 +700,41 @@ int main(void)
 
     // Start execution.
     printf("BLE UART central example started.\r\n");
-    NRF_LOG_INFO("BLE UART central example started.");
-    scan_start();
+    NRF_LOG_INFO("BLE UART central example started. 20250518");
+
+    const uint8_t test_str[] = "UART Test\r\n";
+    for (uint8_t i = 0; i < sizeof(test_str); i++)
+    {
+        app_uart_put(test_str[i]);
+    }
+ NRF_LOG_INFO("app_uart_put sent");
+
+    //scan_start();
+
+    // Set up simple echo test
+    NRF_LOG_INFO("Starting UART echo test...");
+    // Send "Hello" test message
+    const uint8_t hello_str[] = "Hello\r\n";
+    for (uint8_t i = 0; i < sizeof(hello_str) - 1; i++) // -1 to exclude null terminator
+    {
+        ret_code_t err = app_uart_put(hello_str[i]);
+        if (err != NRF_SUCCESS)
+        {
+            NRF_LOG_ERROR("Failed to send char: %c, error: %d", hello_str[i], err);
+        }
+    }
+    NRF_LOG_INFO("Hello test message sent");
+    // uint8_t echo_byte;
+    // while (1)
+    // {
+    //    // Process logs to make them appear in debug window
+    //    NRF_LOG_PROCESS();
+    //    if (app_uart_get(&echo_byte) == NRF_SUCCESS)
+    //    {
+    //        app_uart_put(echo_byte);
+    //        NRF_LOG_INFO("Echoed: 0x%02X", echo_byte);
+    //    }
+    // }
 
     // Enter main loop.
     for (;;)
