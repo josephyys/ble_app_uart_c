@@ -11,6 +11,18 @@ dmesg | grep tty
 minicom -D /dev/ttyS5 -b 115200
 busybox hexdump -C /dev/ttyS5
 
+cat /proc/interrupts | grep 39
+lsusb -v | grep -i irq
+lspci -vv | grep -i irq
+
+echo $LANG
+export LANG=en_US.UTF-8
+minicom -D /dev/ttyS5 -b 115200 -c on
+
+screen -S 4334 -X quit
+screen -ls            
+
+
 echo -e "Test123\r\n" > /dev/ttyS5
 echo -e "Test123\r\n" > /dev/ttyS4
 
@@ -92,6 +104,9 @@ plug in usb-serial, error==>
 <error> app: Communication error occurred while handling UART.
 <error> app: Fatal error
 
+
+##
+stty -F /dev/ttyS5 115200 cs8 -parenb -cstopb -crtscts raw
 
 
 # Test Records Summary

@@ -48,6 +48,12 @@
 #endif
 // <h> Application 
 
+// 在 PCA10040 的 sdk_config.h 中
+#define NRF_DRV_USBD_ENABLED 0
+#define APP_USBD_ENABLED 0
+#define APP_USBD_CDC_ACM_ENABLED 0
+
+
 //==========================================================
 // <o> APP_SHUTDOWN_HANDLER_PRIORITY - Application shutdown observer priority. 
 #ifndef APP_SHUTDOWN_HANDLER_PRIORITY
@@ -7847,6 +7853,18 @@
 #ifndef NRF_LOG_BUFSIZE
 #define NRF_LOG_BUFSIZE 1024
 #endif
+
+//用 RX 引腳的內部上拉電阻，防止浮動：
+#define UART_DEFAULT_CONFIG_HWFC 0
+#define UART_DEFAULT_CONFIG_PARITY 0
+#define UART_DEFAULT_CONFIG_BAUDRATE UART_BAUDRATE_BAUDRATE_Baud115200
+#define UART_DEFAULT_CONFIG_IRQ_PRIORITY APP_IRQ_PRIORITY_LOWEST
+
+#define NRF_SDH_BLE_ENABLED 1
+#define NRF_SDH_BLE_CENTRAL_LINK_COUNT 1
+#define NRF_SDH_BLE_TOTAL_LINK_COUNT 1
+#define NRF_BLE_SCAN_ENABLED 1
+#define BLE_NUS_C_ENABLED 1
 
 // <q> NRF_LOG_CLI_CMDS  - Enable CLI commands for the module.
  

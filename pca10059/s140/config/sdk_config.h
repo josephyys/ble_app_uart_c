@@ -47,15 +47,23 @@
 #include "app_config.h"
 #endif
 
+
+
 // 確保 USB CDC 支援已啟用 (Dongle 需要)
 #define APP_USBD_ENABLED 1
 #define APP_USBD_CDC_ACM_ENABLED 1
 
 // 修改 UART 配置
 // 在 Dongle 上，我們使用 USB CDC ACM 而非傳統 UART
-//#define UART_ENABLED 0
-//#define UART0_ENABLED 0
-//#define APP_UART_ENABLED 0
+// 禁用 UART
+#define UART_ENABLED 0
+#define UART0_ENABLED 0
+#define APP_UART_ENABLED 0
+
+// 啟用 USB CDC ACM
+#define NRF_DRV_USBD_ENABLED 1
+#define APP_USBD_ENABLED 1 
+#define APP_USBD_CDC_ACM_ENABLED 1
 
 // 替代為 USB CDC ACM
 #define nrf_cli_enabled 1

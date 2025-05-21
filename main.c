@@ -58,10 +58,214 @@
 #include "nrf_pwr_mgmt.h"
 #include "nrf_ble_scan.h"
 
+// 檢查是否為 USB 支援的硬體 (nRF52840 有 USB 支援，nRF52832 沒有)
+#if defined(NRF52840_XXAA)
+  #define HAS_USB_SUPPORT 1
+  // 僅在支援 USB 的芯片上引入 USB 相關頭文件
+  #include "app_usbd.h"
+  #include "app_usbd_serial_num.h"
+  #include "app_usbd_cdc_acm.h"
+#else
+  #define HAS_USB_SUPPORT 0
+#endif
+
 #include "nrf_log.h"
 #include "nrf_log_ctrl.h"
 #include "nrf_log_default_backends.h"
 
+// 定義介面選擇變數 (0 = UART, 1 = USB CDC ACM)
+#ifndef COMM_INTERFACE
+  #if HAS_USB_SUPPORT && defined(APP_USBD_ENABLED) && (APP_USBD_ENABLED == 1)
+    #define COMM_INTERFACE 1  // 默認使用 USB CDC ACM (如果可用)
+  #else
+    #define COMM_INTERFACE 0  // 默認使用 UART
+  #endif
+#endif
+
+// 前向宣告 BLE NUS Client，使其在 #if 區塊中可見
+BLE_NUS_C_DEF(m_ble_nus_c);                                             /**< BLE Nordic UART Service (NUS) client instance. */
+static uint16_t m_ble_nus_max_data_len = BLE_GATT_ATT_MTU_DEFAULT - OPCODE_LENGTH - HANDLE_LENGTH;
+
+// 僅在支援 USB CDC ACM 且選擇 USB CDC ACM 介面的情況下定義相關變數和函數
+#if (COMM_INTERFACE == 1 && HAS_USB_SUPPORT)
+// 定義 USB CDC ACM 類實例
+static const app_usbd_class_inst_t * p_cdc_acm;
+
+// 定義接收緩衝區
+#define CDC_ACM_COMM_INTERFACE  0
+#define CDC_ACM_COMM_EPIN       NRF_DRV_USBD_EPIN2
+#define CDC_ACM_DATA_INTERFACE  1
+#define CDC_ACM_DATA_EPIN       NRF_DRV_USBD_EPIN1
+#define CDC_ACM_DATA_EPOUT      NRF_DRV_USBD_EPOUT1
+
+// USB CDC ACM 類實例
+APP_USBD_CDC_ACM_GLOBAL_DEF(m_app_cdc_acm,
+                            CDC_ACM_COMM_INTERFACE,
+                            CDC_ACM_COMM_EPIN,
+                            CDC_ACM_DATA_INTERFACE,
+                            CDC_ACM_DATA_EPIN,
+                            CDC_ACM_DATA_EPOUT,
+                            APP_USBD_CDC_COMM_PROTOCOL_AT_V250,
+                            NULL); // 加入第8個參數 - NULL 表示使用默認處理函數
+
+static bool m_cdc_acm_open = false;
+
+/**
+ * @brief USB CDC ACM 用戶事件處理函數
+ */
+static void cdc_acm_user_ev_handler(app_usbd_class_inst_t const * p_inst,
+                                    app_usbd_cdc_acm_user_event_t event)
+{
+    static uint8_t data_array[BLE_NUS_MAX_DATA_LEN];
+    static uint16_t index = 0;
+    ret_code_t ret;
+    
+    switch (event)
+    {
+        case APP_USBD_CDC_ACM_USER_EVT_PORT_OPEN:
+        {
+            m_cdc_acm_open = true;
+            NRF_LOG_INFO("CDC ACM port opened");
+            /*傳送測試消息*/
+            const uint8_t test_str[] = "USB CDC ACM initialized\r\n";
+            ret = app_usbd_cdc_acm_write(&m_app_cdc_acm, test_str, sizeof(test_str) - 1);
+            if (ret != NRF_SUCCESS)
+            {
+                NRF_LOG_INFO("CDC ACM write failed");
+            }
+            break;
+        }
+        case APP_USBD_CDC_ACM_USER_EVT_PORT_CLOSE:
+            m_cdc_acm_open = false;
+            NRF_LOG_INFO("CDC ACM port closed");
+            break;
+        case APP_USBD_CDC_ACM_USER_EVT_TX_DONE:
+            break;
+        case APP_USBD_CDC_ACM_USER_EVT_RX_DONE:
+        {
+            // 從 CDC ACM 緩衝區獲取接收到的數據
+            ret = app_usbd_cdc_acm_read(&m_app_cdc_acm, &data_array[index], 1);
+            if (ret == NRF_SUCCESS)
+            {
+                NRF_LOG_INFO("Received byte[%d]: 0x%02X ('%c')", 
+                             index, data_array[index], 
+                             (data_array[index] >= 32 && data_array[index] <= 126) ? data_array[index] : '.');
+                
+                // 回顯 (如果啟用了回顯)
+                ret = app_usbd_cdc_acm_write(&m_app_cdc_acm, &data_array[index], 1);
+                if (ret != NRF_SUCCESS)
+                {
+                    NRF_LOG_INFO("CDC ACM write failed");
+                }
+
+                index++;
+
+                if ((data_array[index - 1] == '\n') ||
+                    (data_array[index - 1] == '\r') ||
+                    (index >= (BLE_NUS_MAX_DATA_LEN)))
+                {
+                    NRF_LOG_DEBUG("Ready to send data over BLE NUS");
+                    NRF_LOG_HEXDUMP_DEBUG(data_array, index);
+
+                    // 只有在連接有效時才嘗試發送
+                    if (m_ble_nus_c.conn_handle != BLE_CONN_HANDLE_INVALID)
+                    {
+                        do
+                        {
+                            ret = ble_nus_c_string_send(&m_ble_nus_c, data_array, index);
+                            if ((ret != NRF_ERROR_INVALID_STATE) && (ret != NRF_ERROR_RESOURCES))
+                            {
+                                APP_ERROR_CHECK(ret);
+                            }
+                        } while (ret == NRF_ERROR_RESOURCES);
+                    }
+                    else
+                    {
+                        NRF_LOG_INFO("USB CDC data received but no BLE connection");
+                    }
+
+                    index = 0;
+                }
+
+                // 啟用下一個接收
+                ret = app_usbd_cdc_acm_read_any(&m_app_cdc_acm, NULL, 0);
+                if (ret != NRF_SUCCESS)
+                {
+                    NRF_LOG_INFO("CDC ACM read failed");
+                }
+            }
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+static void usbd_state_evt_handler(app_usbd_event_type_t event)
+{
+    switch (event)
+    {
+        case APP_USBD_EVT_DRV_SUSPEND:
+            NRF_LOG_INFO("USB suspend state");
+            break;
+        case APP_USBD_EVT_DRV_RESUME:
+            NRF_LOG_INFO("USB resume state");
+            break;
+        case APP_USBD_EVT_STARTED:
+            NRF_LOG_INFO("USB started");
+            break;
+        case APP_USBD_EVT_STOPPED:
+            NRF_LOG_INFO("USB stopped");
+            app_usbd_disable();
+            break;
+        case APP_USBD_EVT_POWER_DETECTED:
+            NRF_LOG_INFO("USB power detected");
+            if (!nrf_drv_usbd_is_enabled())
+            {
+                app_usbd_enable();
+            }
+            break;
+        case APP_USBD_EVT_POWER_REMOVED:
+            NRF_LOG_INFO("USB power removed");
+            app_usbd_stop();
+            break;
+        case APP_USBD_EVT_POWER_READY:
+            NRF_LOG_INFO("USB ready");
+            app_usbd_start();
+            break;
+        default:
+            break;
+    }
+}
+
+/**@brief Function for initializing the USB CDC ACM. */
+static void usb_cdc_acm_init(void)
+{
+    ret_code_t ret;
+    static const app_usbd_config_t usbd_config = {
+        .ev_state_proc = usbd_state_evt_handler
+    };
+    
+    // Initialize USB
+    ret = app_usbd_init(&usbd_config);
+    APP_ERROR_CHECK(ret);
+    
+    // Initialize CDC ACM class
+    app_usbd_class_inst_t const * class_cdc_acm = app_usbd_cdc_acm_class_inst_get(&m_app_cdc_acm);
+    ret = app_usbd_class_append(class_cdc_acm);
+    APP_ERROR_CHECK(ret);
+    
+    p_cdc_acm = class_cdc_acm;
+    
+    // Register CDC ACM event handler
+    ret = app_usbd_cdc_acm_event_handler_set(&m_app_cdc_acm, cdc_acm_user_ev_handler);
+    APP_ERROR_CHECK(ret);
+    
+    // Enable USB power detection event handler
+    ret = app_usbd_power_events_enable();
+    APP_ERROR_CHECK(ret);
+}
+#endif // (COMM_INTERFACE == 1 && HAS_USB_SUPPORT)
 
 #define APP_BLE_CONN_CFG_TAG    1                                       /**< Tag that refers to the BLE stack configuration set with @ref sd_ble_cfg_set. The default tag is @ref BLE_CONN_CFG_TAG_DEFAULT. */
 #define APP_BLE_OBSERVER_PRIO   3                                       /**< BLE observer priority of the application. There is no need to modify this value. */
@@ -74,7 +278,7 @@
 #define ECHOBACK_BLE_UART_DATA  1                                       /**< Echo the UART data that is received over the Nordic UART Service (NUS) back to the sender. */
 
 
-BLE_NUS_C_DEF(m_ble_nus_c);                                             /**< BLE Nordic UART Service (NUS) client instance. */
+// BLE_NUS_C_DEF(m_ble_nus_c);                                             /**< BLE Nordic UART Service (NUS) client instance. */
 NRF_BLE_GATT_DEF(m_gatt);                                               /**< GATT module instance. */
 BLE_DB_DISCOVERY_DEF(m_db_disc);                                        /**< Database discovery module instance. */
 NRF_BLE_SCAN_DEF(m_scan);                                               /**< Scanning Module instance. */
@@ -82,7 +286,6 @@ NRF_BLE_GQ_DEF(m_ble_gatt_queue,                                        /**< BLE
                NRF_SDH_BLE_CENTRAL_LINK_COUNT,
                NRF_BLE_GQ_QUEUE_SIZE);
 
-static uint16_t m_ble_nus_max_data_len = BLE_GATT_ATT_MTU_DEFAULT - OPCODE_LENGTH - HANDLE_LENGTH; /**< Maximum length of data (in bytes) that can be transmitted to the peer by the Nordic UART service module. */
 
 /**@brief NUS UUID. */
 static ble_uuid_t const m_nus_uuid =
@@ -188,9 +391,11 @@ static void scan_init(void)
     err_code = nrf_ble_scan_init(&m_scan, &init_scan, scan_evt_handler);
     APP_ERROR_CHECK(err_code);
 
+    // 設置掃描過濾器
     err_code = nrf_ble_scan_filter_set(&m_scan, SCAN_UUID_FILTER, &m_nus_uuid);
     APP_ERROR_CHECK(err_code);
 
+    // 啟用掃描過濾器
     err_code = nrf_ble_scan_filters_enable(&m_scan, NRF_BLE_SCAN_UUID_FILTER, false);
     APP_ERROR_CHECK(err_code);
 }
@@ -222,6 +427,7 @@ static void ble_nus_chars_received_uart_print(uint8_t * p_data, uint16_t data_le
     NRF_LOG_DEBUG("Receiving data.");
     NRF_LOG_HEXDUMP_DEBUG(p_data, data_len);
 
+#if (COMM_INTERFACE == 0) // UART
     for (uint32_t i = 0; i < data_len; i++)
     {
         do
@@ -238,6 +444,24 @@ static void ble_nus_chars_received_uart_print(uint8_t * p_data, uint16_t data_le
     {
         while (app_uart_put('\n') == NRF_ERROR_BUSY);
     }
+#elif (COMM_INTERFACE == 1 && HAS_USB_SUPPORT) // USB CDC ACM
+    if (m_cdc_acm_open)
+    {
+        ret_val = app_usbd_cdc_acm_write(&m_app_cdc_acm, p_data, data_len);
+        if (ret_val != NRF_SUCCESS)
+        {
+            NRF_LOG_ERROR("app_usbd_cdc_acm_write failed 0x%04x.", ret_val);
+            APP_ERROR_CHECK(ret_val);
+        }
+        
+        if (p_data[data_len-1] == '\r')
+        {
+            uint8_t lf = '\n';
+            app_usbd_cdc_acm_write(&m_app_cdc_acm, &lf, 1);
+        }
+    }
+#endif
+
     if (ECHOBACK_BLE_UART_DATA)
     {
         // Send data back to the peripheral.
@@ -260,15 +484,17 @@ static void ble_nus_chars_received_uart_print(uint8_t * p_data, uint16_t data_le
  *          a string. The string is sent over BLE when the last character received is a
  *          'new line' '\n' (hex 0x0A) or if the string reaches the maximum data length.
  */
+#if (COMM_INTERFACE == 0) // UART
+
 void uart_event_handle(app_uart_evt_t * p_event)
 {
     static uint8_t data_array[BLE_NUS_MAX_DATA_LEN];
     static uint16_t index = 0;
     uint32_t ret_val;
 
-    NRF_LOG_INFO("uart_event_handle");
-    // Process logs to make them appear in debug window
-    NRF_LOG_PROCESS();
+    //NRF_LOG_INFO("uart_event_handle");
+    //// Process logs to make them appear in debug window
+    //NRF_LOG_PROCESS();
 
     switch (p_event->evt_type)
     {
@@ -276,16 +502,16 @@ void uart_event_handle(app_uart_evt_t * p_event)
         case APP_UART_DATA_READY:
             UNUSED_VARIABLE(app_uart_get(&data_array[index]));
             // Add detailed debug for each received character
-    NRF_LOG_INFO("Received byte[%d]: 0x%02X ('%c')", 
-                 index, data_array[index], 
-                 (data_array[index] >= 32 && data_array[index] <= 126) ? data_array[index] : '.');
+    //NRF_LOG_INFO("Received byte[%d]: 0x%02X ('%c')", 
+    //             index, data_array[index], 
+    //             (data_array[index] >= 32 && data_array[index] <= 126) ? data_array[index] : '.');
 
-               NRF_LOG_INFO("app_uart_put");
+    //           NRF_LOG_INFO("app_uart_put");
             //app_uart_put(data_array[index]);
 
             // After app_uart_put
-            ret_code_t put_result = app_uart_put(data_array[index]);
-            NRF_LOG_INFO("TX result: %d", put_result);
+            //ret_code_t put_result = app_uart_put(data_array[index]);
+            //NRF_LOG_INFO("TX result: %d", put_result);
 
             index++;
 
@@ -332,7 +558,7 @@ void uart_event_handle(app_uart_evt_t * p_event)
             break;
     }
 }
-
+#endif // (COMM_INTERFACE == 0)
 
 /**@brief Callback handling Nordic UART Service (NUS) client events.
  *
@@ -673,6 +899,12 @@ static void idle_state_handle(void)
 {
     if (NRF_LOG_PROCESS() == false)
     {
+#if (COMM_INTERFACE == 1) // USB CDC ACM
+        while (app_usbd_event_queue_process())
+        {
+            /* 處理所有 USB 事件 */
+        }
+#endif        
         // In idle_state_handle
         // uint8_t byte;
         // if (app_uart_get(&byte) == NRF_SUCCESS)
@@ -683,13 +915,49 @@ static void idle_state_handle(void)
     }
 }
 
+#if (COMM_INTERFACE == 1) // USB CDC ACM
+/**@brief Function for initializing the USB CDC ACM. */
+static void usb_cdc_acm_init(void)
+{
+    ret_code_t ret;
+    static const app_usbd_config_t usbd_config = {
+        .ev_state_proc = usbd_state_evt_handler
+    };
+    
+    // Initialize USB
+    ret = app_usbd_init(&usbd_config);
+    APP_ERROR_CHECK(ret);
+    
+    // Initialize CDC ACM class
+    app_usbd_class_inst_t const * class_cdc_acm = app_usbd_cdc_acm_class_inst_get(&m_app_cdc_acm);
+    ret = app_usbd_class_append(class_cdc_acm);
+    APP_ERROR_CHECK(ret);
+    
+    p_cdc_acm = class_cdc_acm;
+    
+    // Register CDC ACM event handler
+    ret = app_usbd_cdc_acm_event_handler_set(&m_app_cdc_acm, cdc_acm_user_ev_handler);
+    APP_ERROR_CHECK(ret);
+    
+    // Enable USB power detection event handler
+    ret = app_usbd_power_events_enable();
+    APP_ERROR_CHECK(ret);
+}
+#endif // (COMM_INTERFACE == 1)
+
 
 int main(void)
 {
     // Initialize.
     log_init();
     timer_init();
+    
+#if (COMM_INTERFACE == 0) // UART
     uart_init();
+#else // USB CDC ACM
+    usb_cdc_acm_init();
+#endif
+    
     buttons_leds_init();
     db_discovery_init();
     power_management_init();
@@ -699,42 +967,25 @@ int main(void)
     scan_init();
 
     // Start execution.
-    printf("BLE UART central example started.\r\n");
+    printf("BLE UART central example started.20250521\r\n");
     NRF_LOG_INFO("BLE UART central example started. 20250518");
 
+#if (COMM_INTERFACE == 0) // UART
     const uint8_t test_str[] = "UART Test\r\n";
-    for (uint8_t i = 0; i < sizeof(test_str); i++)
+    for (uint8_t i = 0; i < sizeof(test_str) - 1; i++)
     {
         app_uart_put(test_str[i]);
     }
- NRF_LOG_INFO("app_uart_put sent");
+    NRF_LOG_INFO("app_uart_put sent");
+#else // USB CDC ACM
+    NRF_LOG_INFO("USB CDC ACM initialized");
+#endif
 
-    //scan_start();
+    scan_start();
 
-    // Set up simple echo test
-    NRF_LOG_INFO("Starting UART echo test...");
-    // Send "Hello" test message
-    const uint8_t hello_str[] = "Hello\r\n";
-    for (uint8_t i = 0; i < sizeof(hello_str) - 1; i++) // -1 to exclude null terminator
-    {
-        ret_code_t err = app_uart_put(hello_str[i]);
-        if (err != NRF_SUCCESS)
-        {
-            NRF_LOG_ERROR("Failed to send char: %c, error: %d", hello_str[i], err);
-        }
-    }
-    NRF_LOG_INFO("Hello test message sent");
-    // uint8_t echo_byte;
-    // while (1)
-    // {
-    //    // Process logs to make them appear in debug window
-    //    NRF_LOG_PROCESS();
-    //    if (app_uart_get(&echo_byte) == NRF_SUCCESS)
-    //    {
-    //        app_uart_put(echo_byte);
-    //        NRF_LOG_INFO("Echoed: 0x%02X", echo_byte);
-    //    }
-    // }
+    // 輸出當前使用的介面
+    NRF_LOG_INFO("Communication interface: %s", 
+                 (COMM_INTERFACE == 0) ? "UART" : "USB CDC ACM");
 
     // Enter main loop.
     for (;;)
