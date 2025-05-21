@@ -2,6 +2,69 @@
 
 dongle soft device pca10059 s140
 
+##
+83           804           interrupts    sched_debug
+# which bluetoothctl
+citool# which hcitool
+# which hcitool
+# which bluetoothctl
+# modprobe btusb       # For USB Bluetooth adapters
+roadcom Bluetooth devices
+modprobe bluetooth   # Core Bluetooth moduleBluetooth: Core ver 2.22
+NET: Registered protocol family 31
+Bluetooth: HCI device and connection manager initialized
+Bluetooth: HCI socket layer initialized
+Bluetooth: L2CAP socket layer initialized
+Bluetooth: SCO socket layer initialized
+usbcore: registered new interface driver btusb
+# modprobe btrtl       # For Realtek Bluetooth devices
+# modprobe btintel     # For Intel Bluetooth devices
+# modprobe btbcm       # For Broadcom Bluetooth devices
+# modprobe bluetooth   # Core Bluetooth module
+# 
+lsmod | grep bt
+bluetoothd -n &
+hciconfig
+dmesg | grep -i bluetooth
+
+usr/libexec/bluetooth/bluetoothd -n &
+/data/usr/bin/dbus-daemon --system --fork --config-file=/data/usr/share/dbus-1/system.conf
+mkdir -p /run/dbus
+chmod 755 /run/dbus
+/data/usr/bin/dbus-daemon --system --fork
+
+addgroup dbus
+adduser -S -G dbus dbus
+
+/etc/dbus-1/system.d/org.bluez.conf
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <policy user="root">
+    <allow own="org.bluez"/>
+    <allow send_destination="org.bluez"/>
+    <allow send_interface="org.bluez.Agent1"/>
+    <allow send_interface="org.bluez.Device1"/>
+    <allow send_interface="org.bluez.Adapter1"/>
+    <allow send_interface="org.bluez.GattCharacteristic1"/>
+    <allow send_interface="org.bluez.GattDescriptor1"/>
+    <allow send_interface="org.bluez.GattService1"/>
+  </policy>
+</busconfig>
+
+addgroup bluetooth
+
+
+killall dbus-daemon
+/data/usr/bin/dbus-daemon --system --fork
+# which dbus-daemon
+/data/usr/bin/dbus-daemon
+# 
+/data/usr/bin/dbus-daemon --system --fork
+ls /run/dbus/system_bus_socket
+
+examples/ble_central_and_peripheral/ble_connectivity
+
 # Run this on NUC980 before sending data
 stty -F /dev/ttyS4 115200 cs8 -parenb -cstopb -crtscts raw
 stty -F /dev/ttyS5 115200 cs8 -parenb -cstopb -crtscts raw
